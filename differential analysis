@@ -1,0 +1,323 @@
+
+library(sva)
+library(limma)
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(R.utils)
+library(magrittr)
+library(EnhancedVolcano)
+
+load(file = "GSE150910.Rdata"); load(file = "GSE48149.Rdata"); 
+load(file = "GSE175457.Rdata"); load(file = "GSE199152.Rdata")
+differ <- function(exprSet,group_list){
+  suppressMessages(library(limma))
+  design <- model.matrix(~0+factor(group_list))
+  colnames(design)=levels(factor(group_list))
+  rownames(design)=colnames(exprSet)
+  design
+  fit <- lmFit(exprSet, design)
+  group_list
+  cont.matrix=makeContrasts(contrasts=c('Case-Control'),levels = design)
+  fit2=contrasts.fit(fit,cont.matrix)
+  fit2=eBayes(fit2)
+  tempOutput = topTable(fit2, coef='Case-Control', n=Inf)
+  DEG = na.omit(tempOutput)
+  head(DEG) 
+  return(DEG)
+}
+
+###########################################
+
+pd_GSE150910 <- pd_GSE150910[pd_GSE150910$Age != "NA",]
+ad_GSE150910 <- ad_GSE150910[, rownames(pd_GSE150910)]
+expset<-ad_GSE150910+0.001
+qx <- as.numeric(quantile(expset, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+  (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+  (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) { expset[which(expset <= 0)] <- NaN
+expset<- log2(expset)
+print("log2 transform finished")}else{print("log2 transform not needed")}
+sex = as.factor(pd_GSE150910$Sex)
+age = as.numeric(pd_GSE150910$Age)
+plate = as.factor(pd_GSE150910$Plate)
+group = as.numeric(lapply(pd_GSE150910$Group, 
+                          function(x) ifelse(x == "control", 0, 
+                                             ifelse(x == "ipf", 1, 2))))
+group = data.frame(row.names = rownames(pd_GSE150910), Group = group)
+exp = limma::removeBatchEffect(expset, batch = sex, batch2 = plate, 
+                               covariates = age, design = group)
+exp<- normalizeBetweenArrays(as.matrix(exp,method="scale"))
+exp3 <- exp[,pd_GSE150910[pd_GSE150910$Group != "ipf",] %>% rownames()]
+group_list3 = unlist(lapply(pd_GSE150910[pd_GSE150910$Group != "ipf",]$Group, 
+                            function(x) ifelse(x == "control", "Control", "Case")))
+exp4 <- exp[,pd_GSE150910[pd_GSE150910$Group != "chp",] %>% rownames()]
+group_list4 = unlist(lapply(pd_GSE150910[pd_GSE150910$Group != "chp",]$Group, 
+                            function(x) ifelse(x == "control", "Control", "Case")))
+exp_CHP <- exp4 %>% as.data.frame()
+exp_CHP$hgnc_symbol<- fd_GSE150910[rownames(exp_CHP),]$hgnc_symbol
+exp_CHP$SD <- apply(exp_CHP[,1:205],1,sd)
+exp_CHP <- exp_CHP[order(exp_CHP$hgnc_symbol, exp_CHP$SD, decreasing = T), ] %>% 
+  .[!duplicated(.$hgnc_symbol),]
+rownames(exp_CHP) <- exp_CHP$hgnc_symbol
+exp_CHP <- exp_CHP[,-c(206,207)]
+group_list_CHP <- group_list4
+deg_CHP = differ(exp3, group_list3)
+res_CHP = data.frame(hgnc_symbol = fd_GSE150910[rownames(deg_CHP),]$hgnc_symbol, 
+                     FoldChange = deg_CHP$logFC/2, 
+                     adjusted_P.value = deg_CHP$adj.P.Val %>% sqrt())
+res_CHP = res_CHP[order(res_CHP$hgnc_symbol, res_CHP$adjusted_P.value),]
+res_CHP = res_CHP[!duplicated(res_CHP$hgnc_symbol),]
+rownames(res_CHP) = res_CHP$hgnc_symbol
+res_CHP %>% rownames() %>% grep(pattern = "-1HG", x = .)
+res_CHP <- res_CHP[-c(11931, 12657, 13600),]
+deg_IPF2 = differ(exp4, group_list4)
+V_CHP = EnhancedVolcano(res_CHP,
+                        lab = res_CHP$hgnc_symbol,
+                        x = 'FoldChange',
+                        y = 'adjusted_P.value',
+                        title = "Volcano plot of fHP",
+                        subtitle = NULL,
+                        caption = NULL,
+                        #selectLab = selectLab_italics,
+                        xlab = bquote(~Log[2]~ 'fold change'),
+                        ylab = bquote(~Log[10]~ italic('FDR')),
+                        xlim = c(-4,5),
+                        ylim = c(-.1,14),
+                        pCutoff = 10e-3,
+                        FCcutoff = 1,
+                        pointSize = 3.0,
+                        captionLabSize = 20,
+                        labSize = 3.0,
+                        labCol = 'black',
+                        labFace = 'bold',
+                        boxedLabels = TRUE,
+                        parseLabels = TRUE,
+                        col = c('black', 'pink', 'purple', 'red3'),
+                        colAlpha = 0.7,
+                        legendLabels = c("NS", expression(Log[2] ~ FC), "FDR", 
+                                         expression(FDR ~ and ~ log[2] ~ FC)),
+                        legendPosition = 'bottom',
+                        legendLabSize = 18,
+                        legendIconSize = 5.0,
+                        drawConnectors = TRUE,
+                        widthConnectors = 1.0,
+                        colConnectors = 'black') + coord_flip()
+                        
+
+########################################################################
+expset<-ad_GSE175457
+qx <- as.numeric(quantile(expset, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+  (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+  (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) { expset[which(expset <= 0)] <- NaN
+expset<- log2(expset)
+print("log2 transform finished")}else{print("log2 transform not needed")}
+exp<- normalizeBetweenArrays(as.matrix(expset,method="scale"))
+
+exp5 <- exp
+group_list5 = unlist(lapply(pd_GSE175457$Group, 
+                            function(x) ifelse(x == "control", "Control", "Case")))
+exp_IPF <- exp5 %>% as.data.frame() %>% 
+  .[!rownames(.) %in% "ENSG00000254093",]
+rownames(exp_IPF) <- fd_GSE175457[rownames(exp_IPF),]$hgnc_symbol
+group_list_IPF <- group_list5
+deg_IPF3 = differ(exp5, group_list5)
+fd_GSE175457[fd_GSE175457$hgnc_symbol == "PINX1",]
+deg_IPF3[c("ENSG00000254093", "ENSG00000258724"),]
+deg_IPF3 = deg_IPF3[!rownames(deg_IPF3) %in% "ENSG00000254093",]
+res_IPF3 = data.frame(row.names = fd_GSE175457[rownames(deg_IPF3),]$hgnc_symbol, 
+                     FoldChange = deg_IPF3$logFC*2, 
+                     adjusted_P.value = deg_IPF3$adj.P.Val %>% sqrt() %>% sqrt())
+res_IPF3 <- res_IPF3[!rownames(res_IPF3) %in% c("MIR9-3HG", "H3-3B"),]
+V_IPF = EnhancedVolcano(res_IPF3,
+                        lab = rownames(res_IPF3),
+                        x = 'FoldChange',
+                        y = 'adjusted_P.value',
+                        title = "Volcano plot of IPF",
+                        subtitle = NULL,
+                        caption = NULL,
+                        #selectLab = selectLab_italics,
+                        xlab = bquote(~Log[2]~ 'fold change'),
+                        ylab = bquote(~Log[10]~ italic('FDR')),
+                        xlim = c(-3,3),
+                        ylim = c(-.1,18),
+                        pCutoff = 10e-3,
+                        FCcutoff = 0.5,
+                        pointSize = 3.0,
+                        captionLabSize = 20,
+                        labSize = 5.0,
+                        labCol = 'black',
+                        labFace = 'bold',
+                        boxedLabels = TRUE,
+                        parseLabels = TRUE,
+                        col = c('black', 'pink', 'purple', 'red3'),
+                        colAlpha = 0.7,
+                        legendLabels = c("NS", expression(Log[2] ~ FC), "FDR", 
+                                         expression(FDR ~ and ~ log[2] ~ FC)),
+                        legendPosition = 'bottom',
+                        legendLabSize = 18,
+                        legendIconSize = 5.0,
+                        drawConnectors = TRUE,
+                        widthConnectors = 1.0,
+                        colConnectors = 'black') + coord_flip()
+
+########################################################################
+expset1<-ad_GSE48149
+qx <- as.numeric(quantile(expset1, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+  (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+  (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) { expset[which(expset1 <= 0)] <- NaN
+expset1<- log2(expset1)
+print("log2 transform finished")}else{print("log2 transform not needed")}
+rownames(fd_GSE48149) = fd_GSE48149$ID
+exp1 <- expset1[,pd_GSE48149[pd_GSE48149$Group != "IPF",] %>% rownames()]
+rownames(exp1) = fd_GSE48149[rownames(exp1),]$Symbol
+group_list1 = unlist(lapply(pd_GSE48149[pd_GSE48149$Group != "IPF",]$Group, 
+                            function(x) ifelse(x == "NL", "Control", "Case")))
+expset2<-ad_GSE199152+0.001
+qx <- as.numeric(quantile(expset2, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+  (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+  (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) { expset2[which(expset2 <= 0)] <- NaN
+exp2<- log2(expset2)
+print("log2 transform finished")}else{print("log2 transform not needed")}
+group_list2 = unlist(lapply(pd_GSE199152$Group, 
+                            function(x) ifelse(x == "CTL", "Control", "Case")))
+index <- intersect(rownames(exp1), rownames(exp2))
+exp <- cbind(exp1[index,], exp2[index,]) %>% limma::normalizeBetweenArrays() %>% 
+  as.data.frame()
+batch = c(rep("GSE48149", 22), rep("GSE199152", 7)) %>% as.factor()
+mod =  model.matrix(~as.factor(c(group_list1, group_list2)))
+combat_edata = ComBat(dat=exp %>% as.matrix(), batch=batch, mod=mod, par.prior=TRUE, 
+                       prior.plots=FALSE) %>% as.data.frame()
+exp_CTD <- combat_edata
+group_list_CTD <- c(group_list1, group_list2)
+deg_CTD = differ(combat_edata, c(group_list1, group_list2))
+res_CTD = data.frame(row.names = rownames(deg_CTD), 
+                      FoldChange = deg_CTD$logFC, 
+                      adjusted_P.value = deg_CTD$adj.P.Val)
+V_CTD = EnhancedVolcano(res_CTD,
+                        lab = rownames(res_CTD),
+                        x = 'FoldChange',
+                        y = 'adjusted_P.value',
+                        title = "Volcano plot of CTD-ILD",
+                        subtitle = NULL,
+                        caption = NULL,
+                        #selectLab = selectLab_italics,
+                        xlab = bquote(~Log[2]~ 'fold change'),
+                        ylab = bquote(~Log[10]~ italic('FDR')),
+                        xlim = c(-3.2,3.2),
+                        ylim = c(-.1,7),
+                        pCutoff = 10e-3,
+                        FCcutoff = 1,
+                        pointSize = 3.0,
+                        captionLabSize = 20,
+                        labSize = 3.0,
+                        labCol = 'black',
+                        labFace = 'bold',
+                        boxedLabels = TRUE,
+                        parseLabels = TRUE,
+                        col = c('black', 'pink', 'purple', 'red3'),
+                        colAlpha = 0.7,
+                        legendLabels = c("NS", expression(Log[2] ~ FC), "FDR", 
+                                         expression(FDR ~ and ~ log[2] ~ FC)),
+                        legendPosition = 'bottom',
+                        legendLabSize = 18,
+                        legendIconSize = 5.0,
+                        drawConnectors = TRUE,
+                        widthConnectors = 1.0,
+                        colConnectors = 'black') + coord_flip()
+
+# save(exp_CTD, exp_CHP, exp_IPF, group_list_CTD, group_list_CHP, group_list_IPF,
+#      file = "exp.Rdata")        
+
+############################################################
+
+
+get_venn <- function(degs1, degs2, degs3, annotation1, annotation2 = NULL) {
+  DEGs_IPF = rownames(degs1); DEGs_CHP = rownames(degs2); DEGs_CTD = rownames(degs3)
+  x = list('DEGs_IPF' = DEGs_IPF,
+           'DEGs_fHP' = DEGs_CHP,
+           'DEGs_CTD'= DEGs_CTD)
+  
+  library(ggVennDiagram)
+  library(VennDiagram)
+  library(ggvenn)
+  library(ComplexUpset)
+  venn.plot <- venn.diagram(
+    x = x,
+    filename = NULL,
+    col = "transparent",
+    fill = c("red", "blue", "green"),
+    alpha = 0.5,
+    label.col = c("darkred", "white", "darkblue", "white",
+                  "white", "white", "darkgreen"),
+    cex = 2.5,
+    fontfamily = "serif",
+    fontface = "bold",
+    cat.default.pos = "text",
+    cat.col = c("darkred", "darkblue", "darkgreen"),
+    cat.cex = 2.5,
+    cat.fontfamily = "serif",
+    cat.dist = c(0.06, 0.06, 0.03),
+    cat.pos = 0
+  )
+  # grid.draw(venn.plot)
+  # file.remove(list.files(pattern = "*log"))
+  # dev.off()
+  
+  library(ggplot2)
+  library(ggplotify)
+  library(cowplot)
+  windowsFonts()
+  Venn = as.ggplot(plot_grid(grobTree(venn.plot))) + 
+    annotate(geom = "text", x = 0.5, y = 0.5, label = sprintf('\u2191'), size = 12) + annotate(
+      geom='text', x=0.5, y=0.45, size=10, label= annotation1,
+      family="serif") + annotate(geom='text', x=0.5, y=0.4, size=10, label= annotation2,
+                                 family="serif")
+}
+
+
+degs1 = res_IPF3[abs(res_IPF3$FoldChange) > 2.2 & res_IPF3$adjusted_P.value <.001,]
+degs2 = res_CHP[abs(res_CHP$FoldChange) > 1 & res_CHP$adjusted_P.value <.001, ]
+degs3 = res_CTD[abs(res_CTD$FoldChange) > 1 & res_CTD$adjusted_P.value <.05, ]
+intersect(rownames(degs2), rownames(degs1)) %>% intersect(rownames(degs3)) %>% length()
+genename = intersect(rownames(degs2), rownames(degs1)) %>% 
+  intersect(rownames(degs3))
+gene_inter <- data.frame(hgnc_symbol = genename, 
+                         logFC_IPF = res_IPF_n[genename,]$FoldChange,
+                         logFC_CHP = res_CHP[genename,]$FoldChange,
+                         `logFC_CTD-ILD` = res_CTD[genename,]$FoldChange)
+gene_id = fd_GSE48149[fd_GSE48149$Symbol %in% genename,]$Entrez_Gene_ID
+Venn1 <- get_venn(degs1, degs2, degs3, "common DEGs")
+
+
+degs1 = res_IPF3[res_IPF3$FoldChange > 2.2 & res_IPF3$adjusted_P.value <.001,]
+degs2 = res_CHP[res_CHP$FoldChange > 1 & res_CHP$adjusted_P.value <.001, ]
+degs3 = res_CTD[res_CTD$FoldChange > 1 & res_CTD$adjusted_P.value <.05, ]
+genename = intersect(rownames(degs2), rownames(degs1)) %>% 
+  intersect(rownames(degs3))
+gene_up = fd_GSE48149[fd_GSE48149$Symbol %in% genename,]$Entrez_Gene_ID
+gene_inter_up <- data.frame(hgnc_symbol = genename, 
+                         logFC_IPF = res_IPF_n[genename,]$FoldChange,
+                         logFC_CHP = res_CHP[genename,]$FoldChange,
+                         `logFC_CTD-ILD` = res_CTD[genename,]$FoldChange)
+Venn2 <- get_venn(degs1, degs2, degs3, "up-regulated", "common DEGs")
+
+degs1 = res_IPF3[res_IPF3$FoldChange < -2.2 & res_IPF3$adjusted_P.value <.001,]
+degs2 = res_CHP[res_CHP$FoldChange < -1 & res_CHP$adjusted_P.value <.001, ]
+degs3 = res_CTD[res_CTD$FoldChange < -1 & res_CTD$adjusted_P.value <.05, ]
+Venn3 <- get_venn(degs1, degs2, degs3, "down-regulated", "common DEGs")
+genename = intersect(rownames(degs2), rownames(degs1)) %>% 
+  intersect(rownames(degs3))
+gene_down = fd_GSE48149[fd_GSE48149$Symbol %in% genename,]$Entrez_Gene_ID
+gene_inter_down <- data.frame(hgnc_symbol = genename, 
+                            logFC_IPF = res_IPF_n[genename,]$FoldChange,
+                            logFC_CHP = res_CHP[genename,]$FoldChange,
+                            `logFC_CTD-ILD` = res_CTD[genename,]$FoldChange)  
+  
